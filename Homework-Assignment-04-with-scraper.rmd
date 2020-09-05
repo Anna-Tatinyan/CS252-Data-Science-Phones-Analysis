@@ -1,0 +1,477 @@
+---
+title: "Homework Assignment 04 | Group Homework"
+author: "Anna Tatinyan, Hovhannes Torosyan, Hovsep Avagyan, Knarik Manukyan, Rozi Tunyan"
+date: "July 23, 2018"
+output: pdf_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, warning = F)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(tools)
+library(viridis)
+library(reticulate)
+options(scipen = 5)
+```
+
+```{r, eval=FALSE}
+# Setup python environment for scraping script
+install_miniconda()
+use_miniconda()
+py_install("scrapy")
+```
+
+```{python, eval= F}
+# Scraping script for www.gsmarena.com
+
+import scrapy
+from scrapy.crawler import CrawlerProcess
+
+class DeviceModelsScraper(scrapy.Spider):
+    name = 'DeviceModelsBot'
+    start_urls = ['https://www.gsmarena.com/']
+
+    def parse(self, response):
+        brands_list_page = response.css('div[id="instores-container"] ~ h2.section > a')
+        yield from response.follow_all(brands_list_page, self.parse_brands_list)
+
+    def parse_brands_list(self, response):
+        brand_pages = response.css('div.general-menu a')
+        yield from response.follow_all(brand_pages, self.parse_brand_page)
+
+    def parse_brand_page(self, response):
+        device_pages = response.css('div.general-menu a')
+        yield from response.follow_all(device_pages, self.parse_device)
+
+        pagination_links = response.css('a.left ~ a')
+        yield from response.follow_all(pagination_links, self.parse_brand_page)
+
+    def parse_device(self, response):
+        brand = response.css('h1.nobor::text').re(r'^\S*')
+        model = response.css('h1.nobor::text').re(r'\s(.*)')
+        release_year = response.css('td[data-spec="year"]::text').re_first(r'\d{4}')
+        release_month = response.css('td[data-spec="year"]::text').re_first(r'\d{4}.{0,2}([a-zA-Z]{3,})')
+        website_views = response.css("span[id='popularity-vote']::text").re(r'\d+,*\d+')
+        website_likes = response.css("span[id='fan-vote'] strong::text").extract()
+        display_size = response.css('span[data-spec="displaysize-hl"]::text').re_first(r'\d{1,2}.\d*')
+        display_pixel_width = response.css('td[data-spec="displayresolution"]::text').re(r'(\d+)\s?[x]')
+        display_pixel_height = response.css('td[data-spec="displayresolution"]::text').re(r'[x]\s?(\d+)')
+        camera_megapixels = response.css('td[data-spec="cam1modules"]::text').re(r'^\d+')
+        video_pixels = response.css('span[data-spec="videopixels-hl"]::text').extract()
+        memory_gb_size = response.css('td[data-spec="internalmemory"]::text').re(r'^\d+[MBGK]{2}')
+        ram_gb_size = response.css('td[data-spec="internalmemory"]::text').re_first(r'(\d+[MBGK]{2})\s*RAM')
+        battery_mah_size = response.css('span[data-spec="batsize-hl"]::text').extract()
+        network_types = response.css('td[data-spec="nettech"]::text').extract()
+        dimension_height = response.css('td[data-spec="dimensions"]::text').re(r'^\S*')
+        dimension_width = response.css('td[data-spec="dimensions"]::text').re(r'x\s(\d+.?\d)\sx')
+        dimension_thickness = response.css('td[data-spec="dimensions"]::text').re(r'x\s(\d+.?\d)\sm')
+        os = response.css('td[data-spec="os"]::text').extract()
+        chipset = response.css('td[data-spec="chipset"]::text').extract()
+        cpu = response.css('td[data-spec="cpu"]::text').extract()
+        gpu = response.css('td[data-spec="gpu"]::text').extract()
+        memory_slot = response.css('td[data-spec="memoryslot"]::text').re(r'^\w+')
+        loudspeaker = response.xpath(
+            "//table[9]//tbody[1]//tr[2]//td[2]/text()").re(r'^\w+')
+        audiojack = response.xpath("//a[text()[contains(.,'3.5mm jack')]]/parent::td/following-sibling::td/text()").re(
+            r'^\w+')
+        wifi = response.css('td[data-spec="wlan"]::text').re(r'^\w+-?\w+')
+        bluetooth = response.css('td[data-spec="bluetooth"]::text').re(r'^\S{0,3}')
+        gps = response.css('td[data-spec="gps"]::text').re(r'^([\w\-]+)')
+        radio = response.css('td[data-spec="radio"]::text').re(r'^\w+')
+        price = response.css('td[data-spec="price"]::text').re_first(r'\d+\.?')
+
+        yield {
+            'brand': brand,
+            'model': model,
+            'release_year': release_year,
+            'release_month': release_month,
+            'website_views': website_views,
+            'website_likes': website_likes,
+            'display_size': display_size,
+            'display_pixel_width': display_pixel_width,
+            'display_pixel_height': display_pixel_height,
+            'camera_megapixels': camera_megapixels,
+            'video_pixels': video_pixels,
+            'memory_gb_size': memory_gb_size,
+            'ram_gb_size': ram_gb_size,
+            'battery_mah_size': battery_mah_size,
+            'network_types': network_types,
+            'dimension_height': dimension_height,
+            'dimension_width': dimension_width,
+            'dimension_thickness': dimension_thickness,
+            'os': os,
+            'chipset': chipset,
+            'cpu': cpu,
+            'gpu': gpu,
+            'memory_slot': memory_slot,
+            'loudspeaker': loudspeaker,
+            'audiojack': audiojack,
+            'wifi': wifi,
+            'bluetooth': bluetooth,
+            'gps': gps,
+            'radio': radio,
+            'price': price
+        }
+
+
+process = CrawlerProcess(settings={
+    "FEEDS": {
+        "devices.csv": {"format": "csv"},
+    },
+    "USER_AGENT": 'DeviceModelsScraper',
+    "ROBOTSTXT_OBEY": True,
+    "CONCURRENT_REQUESTS": 8,
+    "DOWNLOAD_DELAY": 0.5,
+    "RANDOMIZE_DOWNLOAD_DELAY": True
+})
+scraper = DeviceModelsScraper()
+process.crawl(DeviceModelsScraper)
+process.start()
+```
+
+```{r}
+mobile_devices <- read.csv("devices.csv")
+```
+
+```{r}
+
+mobile_devices <- mobile_devices %>%
+  mutate(gpu = ifelse(gpu=='3D Graphics HW Accelerator','Nokia 3D Graphics HW Accelerator' ,gpu)) %>%
+  mutate(gpu_brand = str_extract(gpu,'^([A-Za-z]+)')) %>%
+  mutate(ram = ram_gb_size) %>%
+  mutate(ram_mb_size = ifelse(str_detect(ram,'GB$'),
+                              as.numeric(str_extract(ram,'^[0-9]+'))*1024,
+                              as.numeric(str_extract(ram,'^[0-9]+')))) %>%
+  mutate(memory = memory_gb_size) %>%
+  mutate(memory_mb_size = ifelse(str_detect(memory,'GB$'),
+                                 as.numeric(str_extract(memory,'^[0-9]+'))*1024,
+                                 as.numeric(str_extract(memory,'^[0-9]+')))) %>%
+  mutate(release_month = ifelse(str_detect(release_month, '^(Jan|Feb|Mar)'), 'Q1',
+                                ifelse(str_detect(release_month, '^(Apr|May|Jun)'), 'Q2',
+                                       ifelse(str_detect(release_month, '^(Jul|Aug|Sep)'), 'Q3',
+                                              ifelse(str_detect(release_month, '^(Oct|Nov|Dec)'), 'Q4',
+                                                     ifelse(str_detect(release_month, '^(Q1|Q2|Q3|Q4)$'), release_month, NA))))))
+
+brands <- unique(mobile_devices$brand)
+network_types <- unique(mobile_devices$network_types)
+GPU <- unique(mobile_devices$gpu)
+GPUbrands <- unique(str_extract(GPU,'^([A-Za-z]+)'))
+RAM <- unique(mobile_devices$ram)
+RAMsizes <- unique(mobile_devices$ram_mb_size)
+Memory <- unique(mobile_devices$memory_gb_size)
+Memory_sizes <- unique(mobile_devices$memory_mb_size)
+
+
+mobile_devices_filtered <- mobile_devices %>%
+  filter(video_pixels == str_subset(video_pixels, pattern = "\\d+p$"),
+         price <= 750, camera_megapixels <=20, ram_mb_size<=7500) %>%
+  mutate(video_pixels = as.numeric(str_remove_all(video_pixels, pattern = "p")),
+         website_views = as.numeric(str_remove_all(website_views, ",")))
+
+
+
+model3Data<- mobile_devices_filtered %>%
+  select(c(3,5,7,8,9,10,11,14,30,33,35))
+
+model3Data <- na.omit(model3Data)
+
+i <- c(1:10)
+model3Data[ , i] <- apply(model3Data[ , i], 2,            
+                          function(x) as.numeric(x))
+
+# model3Data <- model3Data %>%
+#   filter(display_pixel_width <= 2000)
+colnames(model3Data)[4:5] <- c("display_pixel_height", "display_pixel_width")
+```
+
+## The problem/data description
+In the scope of this project we decided to analyze the website [https://www.gsmarena.com/makers.php3]() and with web-scraping get the information about the characteristics of phones available there. The website contains 116 brands of phones with different models and characteristics for each. The initial scraped dataset's structure was the following: *`r nrow(mobile_devices)` observations and `r ncol(mobile_devices)` variables*. To match the dataset to our needs we modify the columns and clean the data from NAs and non-valid values.
+
+In the first part of the assignment we perform multiple regression analysis to find out what are the factors that impact the phones' price. For that purpose we have subsetted the dataset of 900 observations and 11 features, which by intuition, can have a significant positive or negative impact on the price. \
+The resulting subsetted dataset has the following variables: *`r paste0(colnames(model3Data), collapse = ", ")`*. Each variable is self-explanatory, so further on in regression analysis and statistical visualizations each of them will be used without explanations. \
+The regression analysis consists of three parts. In the first part we take all of the features that were formerly selected, afterwards we improve the model by picking and testing different independent variables. Finally, we take two of our independent variables and construct their interaction term and interpret the results. 
+
+## Research questions
+
+1.What are the factors that have significant impact on the phones' price.
+
+## Regression analysis
+
+Before doing the analysis we examined some of our variables and put some limitations on them in order to avoid issues with outliars. The *price* of the phone was limited to 750 dollars as there were some phones that costed as much as 30000 dollars, *camera_megapixels* was limited to be maximum 20mp and *ram_mb_size* was limited to be at most 7500MB. Now let's have a look at our first model. 
+
+
+```{r}
+regModel2 <- lm(price~ display_size +camera_megapixels + release_year + website_views +
+                  battery_mah_size + ram_mb_size + memory_mb_size + display_pixel_height + 
+                  display_pixel_width + video_pixels,
+                data = model3Data)
+summary(regModel2)
+```
+
+According to the results of the regression, the only statistically insignificant independent variable is the *display_size*. *display_pixel_height* is significant in 95% confidence level and one unit increase of that variable implies, on average, 2.399e-02 dollars increase in price, all other things fixed. *camera_megapixels* is significant in 99% confidence level and one unit increase implies, on average, 2.414e+00 dollars increase in price, all other things equal. *website_views* also is significant in 99% confidence level, but surprisingly the analysis shows, that one unit increase of the website views decreases the price of the phone by 8.125e-07 dollars. On 99.9% confidence level we can say that one unit increase of *battery_mah_size* increases the price by 1.075e-02 dollars. The rest of the variables e.g *release_year*, *ram_mb_size*, *memory_mb_size*, *display_pixel_with* and *video_pixels* have a significance level of 99.(9)%, and one unit increase of *release_year* decreases the price by 2.749e+01 dollars, one unit increase of *ram_mb_size* increases the price by 1.659e-02 dollars, one unit increase of *memory_mb_size* increases the price by 1.111e-03 dollars, one unit increase of *display_pixel_width* increases the price by 4.184e-02 dollars, one unit increase of *video_pixels* increases the price by 3.824e-02 dollars. The negative influence of the release year, website views and the fact that the intercept takes the value of 5, meaning that the phone price will start from 5 dollars if all of the explanatory variables take value 0 is not intuitive and cannot be explained properly, so the model does not accurately represent the reality. The standard error rates were also high for the explanatory variables which indicates that the data shown is not that accurate. Different approache was adopted in order to get better results, so some of the variables were excluded. The results of the improved regression model are illustrated below.
+
+```{r}
+regModel3 <- lm(price~ display_size +camera_megapixels+ 
+                  battery_mah_size + ram_mb_size + memory_mb_size +
+                  video_pixels,
+                data = model3Data)
+summary(regModel3)
+```
+
+After improving the model it consists of  6 independent variables from which 4 have significant impact on the price. Those are *battery_mah_size*, *ram_mb_size*, *memory_mb_size* and *video_pixels*. The RAM size is significant on 99% confidence level and the data shows that one unit increase of the RAM size implies, on average, 0.0074276 dollars increase in price, all other things equal. Battery size is significant on 99.9% confidence level and one unit increase of it has, on average, a positive impact of 0.0141098 dollars on the price, all other things fixed. Memory size and video pixels are significant on 99.(9)% confidence level. One unit increase in memory size shows, on average, an increase of 0.0006853 dollars in price of the phone and one unit increase of video_pixels increases the price, on average, by 0.0664453 dollars, all other things equal. From the data we see that the value of the intercept is 72, with the error rate of 18, meaning that the price will differ between 65 to 90 dollars if all our independent variables are 0. With this model we have also decreased the error rates and can conclude that, in comparison with the previous model, this one shows more accurate results. The issue with this model is that it represents the *camera_megapixels* as a non-significant variable but we have that *video_pixels* has a high significance level. Besides this, we found out that camera megapixels and video pixels have dependancy, which means that here we have an interraction effect. To deal with this problem, in our next model the interaction term of the two independent variables is included.
+
+
+```{r}
+regModel4<- lm(price~ camera_megapixels*video_pixels + display_size + battery_mah_size+
+                  ram_mb_size + memory_mb_size, data = model3Data)
+    
+summary(regModel4)
+```
+
+In the final model we observe the same independent variables and one interaction term of camera megapixels and video pixels. Here we have almost the same results with slight differences. On 99.9% confidence level we have that one unit increase of battery size shows 0.0137632 dollars increase in price, on 99% confidence level we have 0.0073376 dollars increase in price and on 99.(9)% confidence level we see that one unit increase of memory size increases the price by 0.0006615 dollars, on average, all other things equal. The interaction term is  significant on 95% confidence level and one unit increase of it increases the price by 0.0033650 dollars, on average, all other things fixed. The Intercept here is 104 with the error rate of 27 which means that the price will differ between 77 and 131 dollars if our explanatory variables have 0 value. With this model we also made an attempt to minimize the error rates in order to have more accurate results. However, the model could be further improved and analized for getting better results. 
+
+
+## Statistical plots/visualizations
+
+Now let's have a look at some plots and interesting visualizations regarding phones and their characteristics.
+\
+
+```{r,fig.height=4 , results="hide"}
+mobile_devices_filtered %>%
+  group_by(brand) %>%
+  summarise(website_views_all = mean(website_views),website_likes_all = mean(website_likes)) %>%
+  top_n(15,website_likes_all) %>%
+  ggplot(aes(x=reorder(brand,-website_likes_all),y=website_likes_all,fill=website_views_all)) + geom_histogram(stat="identity") +
+  scale_fill_continuous(low = "greenyellow",high = "green4", name="Avarage views") +
+  labs(title = "Relationship between avarage views and likes per brand", 
+       x = "Brand name", y = "Avarage likes") +
+  theme(panel.background = element_rect(fill = alpha('lemonchiffon1',0.5)),
+        axis.text.x = element_text(angle=90)) 
+```
+\
+The graph shows the relationship between the average website views and likes of phones for the top 15 brands with the most likes.
+We analyzed to see whether the average number of likes and views are proportional to each other or not. The brand with the highest number of average website likes is OnePlus, which we can see has the highest average number of website views. In general, the fewer are the number of likes the fewer is the number of views, however, for brands with a close number of likes, this can differ. The second one by the number of likes is Sony and the third is Apple, however, Sony has fewer views than Apple, which can indicate that the users of SOny are more prone to liking the phones than Apple users. From the brands with fewer likes take Samsung, which is close to Google and Microsoft. In case of Microfost and Samsung the number of likes and views are proportional, however in case of Google and Samsung, again, we see a different pattern, as Google has more likes but fewer views.\
+So, we can say that in general scope the number of views and likes are proportional, but in smaller scopes there can be deviations.
+
+```{r,fig.height=4 , fig.width=6, fig.height=4, results="hide"}
+ylab = c(200,400,600,800)
+model3Data %>%
+  ggplot(aes(x = release_year, y = website_views)) + 
+  geom_histogram(stat = "identity",fill="darkolivegreen") +
+  xlim(c(2009,2020)) +
+  scale_y_continuous(labels = paste0(ylab, "M"),
+                     breaks = 10^6 * ylab) + 
+  labs(title = "Relationship between release year and website views", 
+       x = "Release year", y = "Website views") +
+  theme(panel.background = element_rect(fill='lemonchiffon1'))
+```
+
+
+\
+The plot represents the relationship of phones released between 2009 and 2020 and their website views. We see that in gradually the viwes of websites started to increase and in 2014 it reached its peak. Afterwads, it gradually started to decrease and the graph looks like almost a normal distribution. \
+Apparently in 2014 there was some kind of change or boom in the industry. \
+It was estimated that smartphones will capture almost 69% of global mobile phone sales in the market so it may be the reason of so massive phone website views. \
+The gradual decrease of the graph could be explained as following: smartphones became a common practice and people started to be less interested in the industry.\
+
+```{r,fig.width=7, fig.height=4, fig.width=10, results="hide"}
+mobile_devices_filtered %>%
+  filter(!is.na(model) & !is.na(price) & release_year %in% c(2010:2020)) %>%
+  group_by(brand,release_year) %>%
+  summarise(number_of_phones = n(), overall_price = sum(price)) %>%
+  group_by(release_year) %>%
+  arrange(overall_price) %>%
+  mutate(rank = order(overall_price,decreasing = TRUE)) %>%
+  filter(rank <= 3) %>%
+  ggplot(aes(x = brand,y = overall_price, fill = number_of_phones)) +
+  geom_histogram(stat="identity",) +
+  facet_grid(.~release_year,scales="free_x") +
+  theme(panel.background = element_rect(fill='lemonchiffon1'), axis.text.x = element_text(angle = 90)) +
+  scale_fill_continuous(low= "darkgoldenrod1",high = "darkgoldenrod4",name = "Number of phones\n released") +
+  labs( title = "Top 3 most expensive cumulative releases of brands per year",
+        x = "Brand", y = "Cumulative price")
+```
+\
+The plot shows the top 3 brands with the highest cumulative release price per year.The highest cumulative price means the overall price of all newly released phones. Also, the bars are colored according to the number of phones released. We can see that the cumulative price per brand increased from 2010 to 2014 and then decreased. Samsung is the only brand that appeared in top 3 for 7 years. ALso, it's the highest with the cumulative price in 2014, and during all years from 2010 to 2020, in 2014 the number of released phones of Samsung is the highest. For the other years we can notice that in general the higher is the cumulative price the higher is the number of released phones.\
+
+
+```{r, fig.width=8, fig.height=4, results="hide"}
+
+top_10 <- mobile_devices %>%
+  select(c(1,2,5,30))
+top_10 <- na.omit(top_10) %>%
+  mutate(price = sort(price, decreasing = T),
+         website_views = as.numeric(str_remove_all(website_views, ",")),
+         model = str_trim(model)) %>%
+  head(10)
+
+level = c("Aquaris M10", "A7", "Axon 10 Pro 5G", "nubia Alpha", "C6", "Studio G4", "Blade X", "Maven 2", "Blade A520", "nubia Z17 mini")
+
+top_10 %>%
+  group_by(price) %>%
+  ggplot(aes(y = factor(model, level = level), x = website_views)) +
+  geom_bar(stat = "identity", fill=viridis(10)) + 
+  labs(title = "Top 10 phones with highest price and their webiste views", 
+       x = "Website views", y = "Model name") + xlim(c(0,800000)) +
+  theme(panel.background = element_rect(fill='lemonchiffon1'))
+
+```
+\
+This plot represents the top 10 phones with the highest prices. It is ordered in descending order, so the phone with the highest price is at the bottom (*Aquaris M10*) and the phone with 10th highest price is at the top (*nubia Z17 mini*). From this graph we can see that there isn't a big correspondence between the price and the website views. Even though, *Aquaris M10* has the hgihest price it has low website views record; whereas *nubia Z17 mini* has the biggest number of website views in our list of top 10 pricy phones. \
+\
+
+
+```{r, fig.height=4, fig.width=8, results="hide"}
+mobile_devices %>%
+  filter(!is.na(release_year) & !is.na(release_month)) %>%
+  ggplot(aes(x=release_month,fill=factor(cut(release_year,7)))) +  geom_bar(stat="count") +
+  facet_grid(.~as.factor(cut(release_year,7))) +
+  theme(panel.background = element_rect(fill='lemonchiffon1'))+
+  scale_fill_brewer(palette = "Set2", name = "release_year_range") +
+  labs(title = "Distribution of phone releases per quarter of the year for different year ranges", 
+       x = "Year quarter", y = "Number of releases") + 
+  theme(panel.background = element_rect(fill='lemonchiffon1'),
+        axis.text.x = element_text(angle = 90))
+```
+\
+The plot shows how many phones were released per quarter of a year for each 3 year range starting from 2001 to 2020.We can notice that in general the number of releases increased from 2001 to 2012 years. The number of releases per quarter year is approximately the same for each range, except for the first quarter of years 2006-2009, there was a peak of phone releases. The number of phone releases extremely increased in years 2012-2017. We can notice that for both ranges (2012-2015 and 2015-2017) the first and third quarters of years are more active in terms of phone releases, which means that most of the phone releases were at the begging of the years and beginning of the second half of the years.Second quarter for the range (2012-2015) is less active, but the least releases were by the end of the years. For the range (2015-2017) again the least releases were by the end of the years, however, there were about as many releases during the second quarter as for the fouth quarter of the range (2012-2015). So, this can indicate that during (2015-2017) years number of releases were tending to be dropped , which is proved by the last range of years, because obviously the number of releases started dropping by the end of the 2017 year and the overall number of releases dropped dramatically during (2017-2020) years. Again, we can see that least active for phone releases is the end of the years. However for the range (2017-2020) we can say that the number of releases gradually decreases from the beginning of the year, that is more phone releases are done during the first half of the year than the second. For the years 2001-2020 we can say, that until 2012 the number of releases increases, and reaches it's peak during 2012-2015 years, after that it again gradually decreases getting closer to the number of phone releases during 2006-2012 years. \
+
+
+```{r,fig.width=8, fig.height=4, results="hide"}
+mobile_devices_OS <- mobile_devices %>%
+  mutate(OS = toTitleCase(str_extract(os, '^([A-Za-z\\s]+)')), OS = str_trim(str_replace(OS, '\\sOS', '')), OSVersion = str_extract(os, '([0-9]+)'))
+top_OS <- mobile_devices_OS%>%
+  filter(complete.cases(OS)) %>%
+  group_by(OS) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  head(10)
+top_OS <- as.vector(top_OS[['OS']])
+mobile_devices_OS %>%
+   filter(OS %in% top_OS) %>%
+  filter(complete.cases(release_year) & complete.cases(OS)) %>%
+  ggplot(aes(x=release_year, fill =  OS)) +  geom_bar(stat="count", position = 'fill') +
+  labs(title = 'The relationship between year and the share of the top 10 operating systems', 
+       x = 'Year', y = 'The share of OS in released phones') +
+  theme(panel.background = element_rect(fill='azure'))
+```
+\
+This plot represents the relationship between year and the share of the top 10 operating system, which released phones use. In 2002 almost all devices used Symbian, which was mostly the operating system of Nokia. After 2002 Symbian loses the dominance in the sphere and new operating systems like BlackBerry, Linux and Microsoft Windows Mobile appear. In 2009 there are more phones running Microsoft Windows Mobile than Symbian. Symbian runs on less than 25% of all devices of that year. First Android phones were released in 2009 and starting from 2010 it started to dominate more and more. In 2008 phones with IOS first start to be released, but the share of IOS doesn't increase in the future, as there is only one company using it and it releases few phones in a year. In 2020 there are only two main operating systems - Android and IOS. In this year Android reached it's maximum share of devices which is almost 100 percent.\
+  
+  
+```{r,fig.width=6, fig.height=4 ,results="hide"}
+top_brands <- mobile_devices %>%
+  filter(complete.cases(brand) & complete.cases(website_views)) %>%
+  group_by(brand) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  head(7)
+top_brands <- as.vector(top_brands[['brand']])
+mobile_devices %>%
+  filter(brand %in% top_brands) %>%
+  filter(complete.cases(memory_mb_size)) %>%
+  ggplot(aes(x =  memory_mb_size/1024,  y = ram_mb_size/1024, color = brand)) +  geom_smooth(se = FALSE) +
+  labs(title = 'The relationship between memory and RAM sizes for top 7 brands', 
+       x = 'Memory', y = 'RAM') +
+  theme(panel.background = element_rect(fill='lemonchiffon1'))
+```
+\
+This plot shows the relationship between memory and RAM sizes for top 7 brands by the number of their devices. All companies for their new model increase both the size of RAM and Memory In this plot we can identify if memory and RAM sizes increase by the same pace.  For Nokia the graph is almost linear. So the RAM and memory size increase with the same pace. However Nokia by the maximum sizes of RAM and memory is behind 5 brands. For LG and Sony it's easier to increase the memory than RAM. Samsung and Huawei have the maximum memory size, which is over 500 GB. However, they struggle with increasing the RAM. Their logarithmic graphs show that there is a limit of RAM that they still can not pass. The most interesting graph has Motorola. In this case approximately from 50 to 100 GB devices have the same size of RAM. After that point it increases exponentially. At approximately 250 GB it passes all the brands by having more RAM for less memory.\
+
+
+```{r,fig.width=6, fig.height=4, results="hide"}
+mobile_devices %>%
+  filter(audiojack %in% c("Yes","No") & release_year %in% c(2000:2020)) %>%
+  group_by(release_year,audiojack) %>%
+  summarise(count = n()) %>%
+  ggplot(aes(x = release_year,y = count,fill = factor(audiojack))) +
+  geom_histogram(stat = 'identity') +
+  scale_fill_brewer(palette = "Paired", name = "Has an audiojack") +
+  labs(title = "Distribution of the audiojack possesion of the phones released different years", 
+       x = "Year", y = "Number of releases") + 
+  theme(panel.background = element_rect(fill='azure'),
+        axis.text.x = element_text(angle = 90))
+```
+
+\
+The plot shows how many of the released phones for different years have an audio jack. From the graph, we see that audio jacks appeared in the phone industry in 2005. After that, the percent of the phones with audio jacks started to gradually increase each year.Most of the released phones during 2013-2015 had audio jacks. However, after 2015 the percentage starts to decrease gradually. If before 2013, fewer phones were with audio jacks, because the technology wasn't advanced enough, after 2015 the number decreases because other new technologies started to be used instead of audio jacks. Also, from the graph we can notice that number of releases phones increases starting from 2000 year and reaches its peak in 2014, after which it decreases again. So 2014 is the year with the highest number of phone releases.\
+
+
+
+```{r,fig.width=6, fig.height=4, results="hide"}
+mobile_devices_filtered %>%
+  filter(complete.cases(camera_megapixels) & complete.cases(memory_mb_size)) %>%
+  ggplot(aes(x = camera_megapixels, y = memory_mb_size/1024)) + geom_smooth() + 
+  labs(title = 'The relationship between Camera Megapixels and memory size', 
+       x = 'Camera Megapixels', y = 'Memory size in GB') +
+  theme(panel.background = element_rect(fill='azure'))
+```
+\
+This plot shows the relationship between Camera Megapixels and memory size in GegaBytes. All brand tend to have higher and higher megapixels for cameras and sometimes have more than on camera. This also effects on the price of the device. If the camera Megapixels are high, than the memory size should be bigger to be able to store pictures and videos with high quality. As we can see from this plot from 0 to 7.5 megapixels the memory is near 10 GB. after 8 megapixels the memory size increases reaching it's maximum 60 GB but then decreases until 14 megapixels. After that we see an increase and a decrease again till the maximum 20 megapixels. It's intuitive that you get more memory space to take better pictures, but companies do not always do. \
+
+
+```{r,fig.width=6, fig.height=4, results="hide"}
+colour <- colorRampPalette(c("gold4","gold3"))
+ylab <- c(0,2.5,5,7.5)
+top4gpu <- mobile_devices %>%
+  filter(!is.na(gpu_brand)) %>%
+  group_by(gpu_brand) %>%
+  summarise(count = n()) %>%
+  top_n(4,count) %>%
+  select(gpu_brand)
+mobile_devices %>%
+  filter(!is.na(ram_mb_size) & gpu_brand %in% c("Adreno","Mali","PowerVR","ULP")) %>%
+  ggplot(aes(x=ram_mb_size/1024,fill = gpu_brand)) + geom_histogram( binwidth = 0.5) + xlim(0, 9)  +
+  scale_x_continuous(labels = paste0(ylab, "GB")) +
+  scale_fill_brewer(palette = "Set2",name = "GPU Brands") +
+  labs(title = "Distribution of the Ram sizes for the top four gpu brands",
+       x="Ram size", y="Number of Phones") +
+  theme(panel.background = element_rect(fill='azure'))
+```
+\
+The plot shows the distribution of the ram sizes of the released phones that have GPUs of the most used 4 brands. From the graph we can see that the most widespread ones are Adreno and Mali. PowerVR and ULP are used mainly for phones with a small RAM size. So we can say that Adreno and Mali are more powerfull as they require more RAM. Also, the majority of phones have RAM up to 2.5 GB, only small part of the phones have more RAM size. \
+
+
+```{r,fig.height=4 ,fig.height=4 , results="hide"}
+mobile_devices %>%
+  filter(wifi %in% c("Wi-Fi","No") & release_year %in% c(2000:2020) & dimension_thickness < 35) %>%
+  mutate(wifi = ifelse(wifi == "Wi-Fi", "Yes", "No")) %>%
+  ggplot(aes(x=release_year, y=dimension_thickness)) + 
+  geom_point(aes(color = wifi)) +
+  guides(color=guide_legend(title="Wi-Fi")) +
+  scale_y_discrete(breaks = seq(0,30,5)) +
+  labs(title="Devices tickness change over years along with Wi-Fi availability", 
+       x="Year", y="Thickness (mm)")
+```
+
+\
+The above scatter plot is showing the change of devices' thickness/thinness over years with the marking of wi-fi availability/unavailability. The devices considered for the visualization are taken starting from year 2000 and with thickness less than 35mm (3.5cm, pretty big though), as there are some extraordinary exceptions like big black-boxes with a wi-fi receiver inside. The graph helps us prove 3 different assumptions: \
+- Mobile devices get thinner year by year \
+- Mobile devices got wi-fi chipsets starting from about 2008 \
+- Thinner devices are more expected to have Wi-Fi connectivty rather than thicker ones* \
+* Even though in 2010-2015 there were many devices with Wi-Fi, but they always represented the thinner group (see the period of time and Wi-Fi colored marking on the plot). \
+
+
+
+
+```{r,fig.height=4 ,results="hide"}
+mobile_devices_cpu <- mobile_devices_filtered %>%
+  mutate(cpu = tolower(cpu), cpuCoreNumber = ifelse(str_detect(cpu, 'dual-core'), 2,
+                                               ifelse(str_detect(cpu, 'triple-core'), 3, 
+                                                      ifelse(str_detect(cpu, 'quad-core'), 4,
+                                                             ifelse(str_detect(cpu, 'hexa-core'), 6,
+                                                                    ifelse(str_detect(cpu, 'octa-core'), 8,
+                                                                           ifelse(str_detect(cpu, 'deca-core'), 10, NA)))))))
+mobile_devices_cpu %>%
+  filter(complete.cases(cpuCoreNumber)) %>%
+  ggplot(aes( x = factor(cpuCoreNumber), y = battery_mah_size)) + geom_boxplot(fill = 'lightcyan2') +
+  labs(title = 'The relationship between the number of cpu cores in the device and \nthe battery size', 
+       x = 'Number of cpu cores', y = 'Battery size',
+       plot.title = element_text(hjust = "center")) +
+  theme_minimal() + ylim(0, 8000)
+```
+
+\
+This plot represents the relationship between the number of cpu cores in the device and the battery size. As the number of cores increases there is more and more tasks that the device can complete concurrently, so it will use more battery and the phone with multiple cores should have bigger battery size. Let's take a look at this boxplot. We can notice that the least battery size have devices with 2 core cpus. It's weird that 3 core cpu has the highest battery size, so this is an outliar. after 4 to 10 core cpus the battery size increases. The 8 core cpu is the double of 4 core cpu, but the difference between the mean of those two battery sizes is not significant. The device with 10 core cpu have 5 times more cores than 2 core cpu ones, however the battery size is not even the double. \
